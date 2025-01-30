@@ -150,16 +150,20 @@ class PlexAgent:
 
     def __inspect_library(self) -> None:
         """
-        Loads the internal paths from the Plex server
-        :return:
+        Loads the internal paths from the Plex server, processing all locations
+        and storing all unique folder names while de-duplicating paths.
         """
         for section in self.__server.library.sections():
-            remote_path: str = section.locations[0]
-            self.__internal_paths[Path(remote_path).name] = (section.title, remote_path)
+            for remote_path in section.locations:
+                folder_name = Path(remote_path).name
+                if folder_name not in self.__internal_paths:
+                    self.__internal_paths[folder_name] = (section.title, remote_path)
+                else:
+                    logging.debug(f"Duplicate folder name '{folder_name}' found; skipping.")
 
     def is_plex_section(self, folder_name: str) -> bool:
         """
-        Checks if the given path is a Plex section
+        Checks if the given folder name is a Plex section
         :param folder_name: The folder name to check
         :return bool: True if the given folder_name is a Plex section, False otherwise
         """
@@ -172,7 +176,8 @@ class PlexAgent:
         :return: The direct child of the Plex section of the given item
         """
         while item.parent.name not in self.__internal_paths.keys():
-            if len(item.parents) == 0:
+            if item == item.parent:
+                # Reached the root directory
                 return None
             item = item.parent
         return item
@@ -188,33 +193,33 @@ class PlexAgent:
         plex_section = self.__server.library.section(section_title)
         if plex_section.refreshing:
             if shared.user_input.daemon:
-                logging.warning(f"Plex section {section_title} is already refreshing, re-scheduling...")
+                logging.warning(f"Plex section '{section_title}' is already refreshing, re-scheduling...")
                 self.__notify_queue.append((section, item))
             else:
-                logging.warning(f"Plex section {section_title} is already refreshing, skipping...")
+                logging.warning(f"Plex section '{section_title}' is already refreshing, skipping...")
             return
-        scan_path: Path = Path(f"{section_path}/{item}")
-        logging.info(f"Requesting Plex to scan remote path {str(scan_path)}")
+        scan_path = Path(section_path) / item
+        logging.info(f"Requesting Plex to scan remote path '{scan_path}'")
         if shared.user_input.dry_run:
-            logging.info(f"Skipping Plex scan due to dry-run")
+            logging.info("Skipping Plex scan due to dry-run")
         else:
             plex_section.update(str(scan_path))
 
     def manual_scan(self, paths: set[Path]) -> None:
         """
         Manually scans the given paths
-        :param paths: A list of paths to scan
+        :param paths: A set of paths to scan
         :return:
         """
         scan_sections: set[tuple[str, str]] = set()
         for given_path in paths:
-            logging.info(f"Analyzing {given_path}")
-            if given_path.name in self.__internal_paths.keys():
+            logging.info(f"Analyzing '{given_path}'")
+            if self.is_plex_section(given_path.name):
                 scan_sections.add((given_path.name, ""))
             else:
-                section_child: Path | None = self.__find_section_child_of(given_path)
+                section_child = self.__find_section_child_of(given_path)
                 if section_child is None:
-                    logging.error(f"Could not find Plex section for {given_path}")
+                    logging.error(f"Could not find Plex section for '{given_path}'")
                     continue
                 else:
                     scan_sections.add((section_child.parent.name, section_child.name))
@@ -227,17 +232,20 @@ class PlexAgent:
         :param event: The event to parse
         :return:
         """
-        event_type: str = event.event_type
-        event_path: Path = Path(event.src_path) if event_type != 'moved' else Path(event.dest_path)
-        if event_path.name in self.__internal_paths.keys():
+        event_type = event.event_type
+        event_path = Path(event.src_path) if event_type != 'moved' else Path(event.dest_path)
+        if self.is_plex_section(event_path.name):
+            # The event is on a Plex section folder itself; ignore it
             return
-        section_child: Path | None = self.__find_section_child_of(event_path)
+        section_child = self.__find_section_child_of(event_path)
         if section_child is None:
-            logging.error(f"Could not find Plex section for {event_path}")
+            logging.error(f"Could not find Plex section for '{event_path}'")
             return
-        section_scan = (section_child.parent.name, section_child.name)
+        section = section_child.parent.name
+        item = section_child.name
+        section_scan = (section, item)
         if section_scan not in self.__notify_queue:
-            logging.info(f"Adding to queue ({event_type}): {section_child.name}")
+            logging.info(f"Adding to queue ({event_type}): '{item}'")
             self.__notify_queue.append(section_scan)
 
     def start_service(self) -> ():
