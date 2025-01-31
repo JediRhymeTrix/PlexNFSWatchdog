@@ -53,7 +53,7 @@ Plex makes use of inotify to perform partial scans when a file is added or remov
 
 Running Plex Media Server with the library located on Network File System (NFS) mounted directories will not trigger such partial scans because inotify doesn't work on NFS. When a file is changed on an NFS mount, it doesn't trigger an inotify event on the client side.
 
-`Plex NFS Watchdog` is a utility that can be installed on the machine that produces inotify to monitors directories for changes and triggers a partial scan on the Plex Media Server instance installed in a different machine when a change is detected by invoking the Plex API.
+**Plex NFS Watchdog** is a utility that can be installed on the machine where inotify *does* work. It monitors directories for changes (via inotify or equivalent mechanisms) and triggers partial scans on the Plex Media Server (which might be installed elsewhere) by calling Plex’s API whenever a change is detected.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -61,68 +61,81 @@ Running Plex Media Server with the library located on Network File System (NFS) 
 
 ## :gear: Getting Started
 
-To use `Plex NFS Watchdog` you must ensure that on all machines involved the Plex's Library sections use the same folder name. _The folder path can be different on each machine, but the folder name must be the same._
-
-This is important because the utility will use the folder name to trigger the partial scan.
-
-For example, if you have a library section called "Movies" and the folder name is "Movies", the utility will trigger a partial scan on the "Movies" library section when a change is detected in the "Movies" folder.
-
+To use **Plex NFS Watchdog**, ensure that on all machines involved, the Plex library sections use the *same folder name*. The full path can differ (for instance, one might be `/media/Movies`, another might be `R:\Movies`), but the last folder name should match.  
+This is important because the utility uses that folder name to map the changed directory to the correct Plex library section.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### Prerequisites
 
-Obtain the Plex Authentication Token for your Plex Media Server instance. You can find instructions on how to do this [here](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/).
+Obtain the Plex Authentication Token for your Plex Media Server instance. See [this Plex article](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/) for instructions.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### Installation
 
-You can install this tool as a Python Module using `pip`
-or executing the script directly.
+You can install this tool as a Python package or run it directly from source:
 
-- If you want to install the tool as a Python Module:
-    - Install the module using pip: `pip install plex-nfs-watchdog`
-    - You can run the tool using: `plex-nfs-watchdog`
-- If you want to use the script directly:
-    - Clone the repository anywhere on your pc:
+1. **Install with pip**  
 
-      `git clone https://github.com/LightDestory/PlexNFSWatchdog`
+   ```bash
+   pip install plex-nfs-watchdog
+   ```
 
-    - Install the requirements using `pip` (create a `venv` if you want):
+   Then run it with:
 
-      `pip install -r requirements.txt`
+   ```bash
+   plex-nfs-watchdog
+   ```
 
-    - Run directly from source:
+2. **Clone & run from source**  
 
-      `python ./src/plex_nfs_watchdog/plex_nfs_watchdog.py`
+   ```bash
+   git clone https://github.com/LightDestory/PlexNFSWatchdog
+   cd PlexNFSWatchdog
+   pip install -r requirements.txt
+   python ./src/plex_nfs_watchdog/plex_nfs_watchdog.py
+   ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### Usage
 
-This utility requires the following arguments to work:
+**Plex NFS Watchdog** supports both manual one-time scans and daemon mode. It can monitor specific folders *or* all library folders (if `--paths` is omitted). In all cases, the utility sends folder-level scan requests to Plex—no single-file scans are done.
 
-| Argument                                               | Role                                                                                                                                   |
-|--------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------|
-| __--scan \| -s__                                       | Manually triggers a partial-scan on the given paths                                                                                    |
-| __--daemon \| -d__                                     | Starts a watchdog daemon to automatically triggers a partial-scan on the given paths <br> __Requires:__ _--interval_ and _--listeners_ |
-| __--paths \| -p__ _\[PATHS...\]_                       | A list of folder paths                                                                                                                 |
-| __--host \| -H__ _HOST_                                | The host of the Plex server<br>__Default:__ _http://localhost:32400_                                                                   |
-| __--token \| -t__ _TOKEN_                              | The token of the Plex server                                                                                                           |
-| __--interval \| -i__ _INTERVAL_ \[OPTIONAL\]           | The interval in seconds to wait between partial-scans                                                                                  |
-| __--listeners \| -l__ _\[LISTENERS...\]_  \[OPTIONAL\] | The event type to watch: `move`, `modify`, `create`, `delete`, `io_close`, `io_open`                                                                                                        |
+| Argument                                           | Role                                                                                                                                   |
+|----------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| **--scan \| -s**                                    | Manually triggers a partial-scan on the given paths                                                                                    |
+| **--daemon \| -d**                                  | Starts a watchdog daemon to automatically trigger a partial scan on the given paths <br> **Requires:** *--interval* and *--listeners* |
+| **--paths \| -p** *\[PATHS...\]* (Optional)         | A list of folder paths. If omitted, **all** library section paths will be monitored or scanned.                                        |
+| **--host \| -H** *HOST*                             | The host of the Plex server<br>**Default:** *<http://localhost:32400>*                                                                   |
+| **--token \| -t** *TOKEN*                           | The token of the Plex server                                                                                                           |
+| **--interval \| -i** *INTERVAL* \[OPTIONAL\]        | The interval in seconds to wait between partial-scans                                                                                  |
+| **--listeners \| -l** *\[LISTENERS...\]* (Optional) | The event types to watch: `move`, `modify`, `create`, `delete`, etc.                                                                   |
+| **--dry-run**                                       | Skip sending actual scan requests to Plex, useful for testing                                                                          |
 
-- Manual Scan example:
-    >`plex-nfs-watchdog --scan --paths /path/to/library_section1/section_chield1 --host http://localhost:32400 --token YOUR_TOKEN`
-- Daemon Scan example:
-  >`plex-nfs-watchdog --daemon --paths /path/to/library_section1 --host http://localhost:32400 --token YOUR_TOKEN --interval 150 --listeners move modify create delete`
+**Manual scan example** (only scanning specific paths):
+
+```bash
+plex-nfs-watchdog --scan --paths /path/to/Movies /path/to/TVShows \
+  --host http://localhost:32400 --token YOUR_TOKEN
+```
+
+**Daemon scan example** (monitor all library sections):
+
+```bash
+plex-nfs-watchdog --daemon \
+  --host http://localhost:32400 --token YOUR_TOKEN \
+  --interval 150 --listeners move modify create delete
+```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### Notes
 
-After the first successful run, a cache config file containing Plex's host and token will be created in the user's home directory. This file will be used for subsequent runs, so you don't have to provide them every time.
+- After the first successful run, **a cache file** with your Plex host and token is created in your home directory. Subsequent runs use it, so you don’t have to re-enter your host/token.  
+- The utility always does **folder-based scans**; if a file changes, it triggers a scan on that file’s **parent directory**.  
+- If no paths are passed, we automatically **monitor all** folder paths from each Plex library section (according to the server configuration).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -130,9 +143,7 @@ After the first successful run, a cache config file containing Plex's host and t
 
 ## :dizzy: Contributing
 
-If you are interested in contributing, please refer to [Contributing Guidelines](.github/CONTRIBUTING.md) for more information and take a look at open issues. Ask any questions you may have and you will be provided guidance on how to get started.
-
-Thank you for considering contributing.
+If you are interested in contributing, please refer to [Contributing Guidelines](.github/CONTRIBUTING.md) for more information and check open issues. Feel free to ask any questions or propose ideas. Thank you for considering a contribution!
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -140,9 +151,7 @@ Thank you for considering contributing.
 
 ## :handshake: Support
 
-If you find value in my work, please consider making a donation to help me create, and improve my projects.
-
-Your donation will go a long way in helping me continue to create free software that can benefit people around the world.
+If you find value in this project, please consider making a donation to help keep it maintained and free for everyone.
 
 <p align="center">
 <a href='https://ko-fi.com/M4M6KC01A' target='_blank'><img src='https://raw.githubusercontent.com/LightDestory/RepositoryTemplate/master/.github/assets/images/support.png' alt='Buy Me a Hot Chocolate at ko-fi.com' width="45%" /></a>
@@ -154,7 +163,7 @@ Your donation will go a long way in helping me continue to create free software 
 
 ## :warning: License
 
-The content of this repository is distributed under the GNU GPL-3.0 License. See `LICENSE` for more information.
+The content of this repository is distributed under the **GNU GPL-3.0 License**. See the [`LICENSE`](LICENSE) file for more information.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
