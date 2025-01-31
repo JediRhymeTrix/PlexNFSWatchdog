@@ -253,27 +253,35 @@ class PlexAgent:
         """
         event_type = event.event_type
 
+        # Determine which path to use
         if event_type != 'moved':
             event_path = Path(event.src_path)
         else:
             event_path = Path(event.dest_path)
 
-        # Check if the path still exists (might have been removed)
-        if not event_path.exists():
-            logging.debug(f"Path {event_path} no longer exists; ignoring event.")
+        try:
+            # Check if the path still exists (might have been removed)
+            if not event_path.exists():
+                logging.debug(f"Path {event_path} no longer exists; ignoring event.")
+                return
+
+            # Gather the file/folder's last modified time
+            mtime = event_path.stat().st_mtime
+            if mtime < self.script_start_time:
+                # This means the file/folder was last modified before script started
+                logging.debug(f"Ignoring event on {event_path}, modified before script start.")
+                return
+
+            # If it's a file, get the parent folder
+            if not event.is_directory:
+                event_path = event_path.parent
+
+        except OSError as exc:
+            # Handle errors like WinError 1006 or other I/O issues
+            logging.warning(f"OSError accessing {event_path}: {exc}. Skipping this event.")
             return
 
-        # Gather the file/folder's last modified time
-        mtime = event_path.stat().st_mtime
-        if mtime < self.script_start_time:
-            # This means the file/folder was last modified before script started
-            logging.debug(f"Ignoring event on {event_path}, modified before script start.")
-            return
-
-        # If it's a file, get the parent folder
-        if not event.is_directory:
-            event_path = event_path.parent
-
+        # If we get here, event_path is valid and recent
         all_matches = self.find_sections_and_subpaths(event_path)
         if not all_matches:
             logging.error(f"Could not find a matching Plex section for '{event_path}'")
