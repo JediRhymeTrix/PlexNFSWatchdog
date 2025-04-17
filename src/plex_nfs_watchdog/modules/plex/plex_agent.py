@@ -147,50 +147,54 @@ class PlexAgent:
 
     def find_sections_and_subpaths(self, item: Path) -> list[tuple[str, Path]]:
         """
-        Return ALL (section_title, subpath) combos if the user-supplied path includes a folder_name
-        that matches one of Plex's known library paths.
-
-        This approach avoids .resolve(), so we don't rely on OS to transform paths into UNC or
-        drive-letter forms automatically. We simply look for a matching folder_name among item.parts.
+        Return the best (section_title, subpath) combos for the user-supplied path.
+        Instead of matching just the first folder_name, find the deepest (longest) match
+        for each section, i.e., the folder_name that appears latest in the path.
+        This helps avoid false positives when folder names are repeated.
 
         Example:
           If the user path is \\Network\\shared\\Movies\\Comedy\\File.mkv
           and Plex has "X:/Movies" with folder_name="Movies",
           then 'Movies' is in item.parts. The subpath is Comedy\\File.mkv.
           We combine that with X:/Movies, yielding X:/Movies/Comedy/File.mkv as the final path to Plex.
+
+        If multiple sections have matches at the same depth, all are returned.
         """
         item_parts = list(item.parts)
         matches = []
 
+        # For each section, track the deepest match (highest index)
         for section_title, folder_list in self.__internal_paths.items():
+            best_idx = -1
+            best_folder = None
             for (folder_name, remote_path) in folder_list:
-                if folder_name in item_parts:
-                    # find the index of that folder_name
-                    idx = item_parts.index(folder_name)
-                    # the subpath is everything after that folder
-                    sub_path_parts = item_parts[idx + 1:]
-                    if sub_path_parts:
-                        subpath = Path(*sub_path_parts)
-                    else:
-                        # exactly the folder itself
-                        subpath = Path(".")
-                    matches.append((section_title, subpath))
+                try:
+                    idx = len(item_parts) - 1 - item_parts[::-1].index(folder_name)
+                    if idx > best_idx:
+                        best_idx = idx
+                        best_folder = (folder_name, remote_path)
+                except ValueError:
+                    continue  # folder_name not in item_parts
+            if best_folder is not None:
+                folder_name, remote_path = best_folder
+                sub_path_parts = item_parts[best_idx + 1 :]
+                subpath = Path(*sub_path_parts) if sub_path_parts else Path(".")
+                matches.append((section_title, subpath))
 
         return matches
 
-    def __get_scannable_path(self, section_title: str, subpath: Path) -> Path:
+    def __get_scannable_paths(self, section_title: str, subpath: Path) -> list[Path]:
         """
-        Build the path that Plex expects to see by taking the first remote_path for that section
-        and combining it with subpath.
+        Build the path that Plex expects to see by taking the remote_path values for that section
+        and combining them with subpath.
 
         On Windows, that might look like "D:/TV Shows" + subpath = "D:/TV Shows/Episode..."
         On Linux/macOS, it could be "/mnt/media/TV" + subpath = "/mnt/media/TV/Episode..."
         """
         if section_title not in self.__internal_paths:
-            return subpath
+            return list[subpath]
 
-        _, first_remote_path = self.__internal_paths[section_title][0]
-        return Path(first_remote_path) / subpath
+        return [Path(remote_path) / subpath for _, remote_path in self.__internal_paths[section_title]]
 
     def _scan(self, section_title: str, subpath: Path) -> None:
         """
@@ -205,14 +209,15 @@ class PlexAgent:
                 logging.warning(f"Section '{section_title}' is currently refreshing; skipping scan.")
             return
 
-        scannable_path = self.__get_scannable_path(section_title, subpath)
-        logging.info(f"Requesting Plex to scan path '{scannable_path}' in section '{section_title}'")
+        scannable_paths = self.__get_scannable_paths(section_title, subpath)
+        for scannable_path in scannable_paths:
+            logging.info(f"Requesting Plex to scan path '{scannable_path}' in section '{section_title}'")
 
-        if shared.user_input.dry_run:
-            logging.info("Skipping Plex scan (dry-run mode)")
-        else:
-            plex_section.update(str(scannable_path))
-            
+            if shared.user_input.dry_run:
+                logging.info("Skipping Plex scan (dry-run mode)")
+            else:
+                plex_section.update(str(scannable_path))
+
     def _scan_once(self, section_title: str, subpath: Path) -> bool:
         """
         Attempts a single partial scan. Returns True if success,
@@ -223,12 +228,13 @@ class PlexAgent:
             logging.warning(f"Section '{section_title}' is currently refreshing; re-scheduling scan.")
             return False  # We'll reschedule in start_service() loop
 
-        scannable_path = self.__get_scannable_path(section_title, subpath)
-        logging.info(f"Requesting Plex to scan path '{scannable_path}' in section '{section_title}'")
-        if shared.user_input.dry_run:
-            logging.info("Skipping Plex scan (dry-run mode)")
-        else:
-            plex_section.update(str(scannable_path))
+        scannable_paths = self.__get_scannable_paths(section_title, subpath)
+        for scannable_path in scannable_paths:
+            logging.info(f"Requesting Plex to scan path '{scannable_path}' in section '{section_title}'")
+            if shared.user_input.dry_run:
+                logging.info("Skipping Plex scan (dry-run mode)")
+            else:
+                plex_section.update(str(scannable_path))
         return True
 
     def manual_scan(self, paths: set[Path]) -> None:
